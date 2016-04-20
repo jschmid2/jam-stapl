@@ -161,6 +161,7 @@ int tck_delay = 0;
 /* serial port interface available on all platforms */
 BOOL jtag_hardware_initialized = FALSE;
 char *serial_port_name = NULL;
+char *io_def = NULL;
 BOOL specified_com_port = FALSE;
 int com_port = -1;
 void initialize_jtag_hardware(void);
@@ -1059,6 +1060,11 @@ int main(int argc, char **argv)
 				init_list[++init_count] = NULL;
 				break;
 
+#if PORT == LINUX_RPI
+			case 'G':				/* set io definition for RPi */
+				io_def = &argv[arg][2];
+				break;
+#endif
 #if PORT == WINDOWS || PORT == WINDOWS_INPOUT32 || PORT == DOS
 			case 'P':				/* set LPT port address */
 				specified_lpt_port = TRUE;
@@ -1158,6 +1164,12 @@ int main(int argc, char **argv)
 		fprintf(stderr, "    -c<cable>   : alternative download cable compatibility: -cl or -cx\n");
 #endif
 		fprintf(stderr, "    -s<port>    : serial port name (for BitBlaster)\n");
+#if PORT == LINUX_RPI
+		fprintf(stderr, "    -g<def>     : GPIO definition (for Rasperry PI GPIO)\n");
+		fprintf(stderr, "                  def=bcm_base_addr:tck_bcm:tms_bcm:tdi_bcm:tdo_bcm\n");
+		fprintf(stderr, "                  e.g. -g0x20000000:7:25:24:8\n");
+		fprintf(stderr, "		   for RPi1 TCK = PIN26, TMS = PIN22, TDI = PIN24, TDO = PIN18\n");
+#endif
 		fprintf(stderr, "    -r          : don't reset JTAG TAP after use\n");
 		exit_status = 1;
 	}
@@ -1849,7 +1861,7 @@ void initialize_jtag_hardware()
 
 #if PORT == LINUX_RPI
 		printf("[RPi] Initialize GPIO hardware\n");
-		gpio_init();
+		gpio_init(io_def);
 		gpio_init_jtag();
 #endif /* LINUX_RPI */
 	}

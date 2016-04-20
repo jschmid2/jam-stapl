@@ -4,6 +4,7 @@
  */
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/mman.h> //mmap
 
 #include <sys/types.h>
@@ -11,8 +12,9 @@
 #include <fcntl.h>
 #include <unistd.h>
 
-#define BCM2708_PERI_BASE        0x20000000
-#define GPIO_BASE                (BCM2708_PERI_BASE + 0x200000) /* GPIO controller */
+//#define BCM2708_PERI_BASE        0x20000000
+#define BCM2708_PERI_BASE        0x3F000000
+#define GPIO_BASE(base)          (base + 0x200000) /* GPIO controller */
 #define GPIO_LEN                 0xB4 // need only to map B4 registers
 
 //gpio registers
@@ -32,11 +34,17 @@ static const unsigned int GPFSEL2 = 2;
 #define TMS_P1PIN 22 //bcm GPIO 25, P1 pin 22 (out)
 #define TDO_P1PIN 18 //bcm GPIO 24, P1 pin 18 (in)
 
+static unsigned int gpio_bcm_base = GPIO_BASE(BCM2708_PERI_BASE);
+static unsigned int gpio_bcm_tck = TCK;
+static unsigned int gpio_bcm_tdi = TDI;
+static unsigned int gpio_bcm_tms = TMS;
+static unsigned int gpio_bcm_tdo = TDO;
+
 #include "jamgpio.h"
 
 volatile unsigned int *gpio = NULL;
 
-void gpio_init()
+void gpio_init(char *io_def)
 {
 	int mem_fd = 0;
 	void *regAddrMap = MAP_FAILED;
@@ -51,6 +59,43 @@ void gpio_init()
 		}
 	}
 
+	/* Parse options */
+	if(io_def && *io_def)
+	{
+		int value_tck = 0;
+		int value_tms = 0;
+		int value_tdi = 0;
+		int value_tdo = 0;
+		unsigned int base = 0;
+		char *p = strdup(io_def);
+
+		base = strtol(strtok(p, ":"), NULL, 0);
+		value_tck = strtol(strtok(NULL, ":"), NULL, 0);
+		value_tms = strtol(strtok(NULL, ":"), NULL, 0);
+		value_tdi = strtol(strtok(NULL, ":"), NULL, 0);
+		value_tdo = strtol(strtok(NULL, ":"), NULL, 0);
+		free(p);
+
+		if(base > 0 && value_tck != 0 && value_tms != 0 && 
+			value_tdo != 0 && value_tdi != 0 &&
+			value_tck < 32 && value_tms < 32 &&
+			value_tdo < 32 && value_tdi < 32)
+		{
+			printf("[RPi] Using custom IO configuration \"%s\"\n", io_def);
+			gpio_bcm_base = GPIO_BASE(base);
+			gpio_bcm_tck = value_tck;
+			gpio_bcm_tdi = value_tdi;
+			gpio_bcm_tms = value_tms;
+			gpio_bcm_tdo = value_tdo;
+		}
+		else
+		{
+			printf("%d, %d, %d, %d, %d\n", base, value_tck, value_tms, value_tdi, value_tdo);
+			fprintf(stderr,"Invalid GPIO parameters \"%s\"\n", io_def);
+			exit (1);
+		}
+	}
+		
 	/* mmap IO */
 	regAddrMap = mmap(
 	  NULL,             //Any address in our space will do
@@ -58,7 +103,7 @@ void gpio_init()
 	  PROT_READ|PROT_WRITE|PROT_EXEC,// Enable reading & writing to mapped memory
 	  MAP_SHARED|MAP_LOCKED,       //Shared with other processes
 	  mem_fd,           //File to map
-	  GPIO_BASE         //Offset to base address
+	  gpio_bcm_base     //Offset to base address
 	);
 
 	if (regAddrMap == MAP_FAILED)
@@ -77,7 +122,7 @@ void gpio_init()
 	
 	gpio = (volatile unsigned int*) regAddrMap;
 
-	printf("[RPi] Raspberry PI gpio mapped at 0x%p\n", gpio);
+	printf("[RPi] Raspberry PI gpio at 0x%p mapped at 0x%p\n", (void *)gpio_bcm_base, gpio);
 }
 
 void gpio_exit()
@@ -176,60 +221,60 @@ void gpio_writePin(unsigned int pinnum, const unsigned int pinstate)
 void gpio_init_jtag()
 {
 	/* Initialize the JTAG input and output pins */
-	gpio_setPinDir(TCK, OUTPUT);
-	gpio_setPinDir(TDI, OUTPUT);
-	gpio_setPinDir(TMS, OUTPUT);
-	gpio_setPinDir(TDO, INPUT);
+	gpio_setPinDir(gpio_bcm_tck, OUTPUT);
+	gpio_setPinDir(gpio_bcm_tdi, OUTPUT);
+	gpio_setPinDir(gpio_bcm_tms, OUTPUT);
+	gpio_setPinDir(gpio_bcm_tdo, INPUT);
 	printf("[RPi] Using the following GPIO pins for JTAG programming:\n");
-	printf("[RPi]   TCK on BCM GPIO %d P1 pin %d\n", TCK, TCK_P1PIN);
-	printf("[RPi]   TDI on BCM GPIO %d P1 pin %d\n", TDI, TDI_P1PIN);
-	printf("[RPi]   TDO on BCM GPIO %d P1 pin %d\n", TDO, TDO_P1PIN);
-	printf("[RPi]   TMS on BCM GPIO %d P1 pin %d\n", TMS, TMS_P1PIN);
+	printf("[RPi]   TCK on BCM GPIO %d P1 pin %d\n", gpio_bcm_tck, TCK_P1PIN);
+	printf("[RPi]   TDI on BCM GPIO %d P1 pin %d\n", gpio_bcm_tdi, TDI_P1PIN);
+	printf("[RPi]   TDO on BCM GPIO %d P1 pin %d\n", gpio_bcm_tdo, TDO_P1PIN);
+	printf("[RPi]   TMS on BCM GPIO %d P1 pin %d\n", gpio_bcm_tms, TMS_P1PIN);
 }
 
 void gpio_close_jtag()
 {
 	/* Put the used I/O pins back in a safe state */
-	gpio_writePin(TCK, LOW);
-	gpio_writePin(TDI, LOW);
-	gpio_writePin(TMS, LOW);
-	gpio_setPinDir(TCK, INPUT);
-	gpio_setPinDir(TDI, INPUT);
-	gpio_setPinDir(TMS, INPUT);
-	gpio_setPinDir(TDO, INPUT);
+	gpio_writePin(gpio_bcm_tck, LOW);
+	gpio_writePin(gpio_bcm_tdi, LOW);
+	gpio_writePin(gpio_bcm_tms, LOW);
+	gpio_setPinDir(gpio_bcm_tck, INPUT);
+	gpio_setPinDir(gpio_bcm_tdi, INPUT);
+	gpio_setPinDir(gpio_bcm_tms, INPUT);
+	gpio_setPinDir(gpio_bcm_tdo, INPUT);
 }
 
 void gpio_set_tdi()
 {
-	gpio_writePin(TDI, HIGH);
+	gpio_writePin(gpio_bcm_tdi, HIGH);
 }
 
 void gpio_clear_tdi()
 {
-	gpio_writePin(TDI, LOW);
+	gpio_writePin(gpio_bcm_tdi, LOW);
 }
 
 void gpio_set_tms()
 {
-	gpio_writePin(TMS, HIGH);
+	gpio_writePin(gpio_bcm_tms, HIGH);
 }
 
 void gpio_clear_tms()
 {
-	gpio_writePin(TMS, LOW);
+	gpio_writePin(gpio_bcm_tms, LOW);
 }
 
 void gpio_set_tck()
 {
-	gpio_writePin(TCK, HIGH);
+	gpio_writePin(gpio_bcm_tck, HIGH);
 }
 
 void gpio_clear_tck()
 {
-	gpio_writePin(TCK, LOW);
+	gpio_writePin(gpio_bcm_tck, LOW);
 }
 
 unsigned int gpio_get_tdo()
 {
-	return gpio_readPin(TDO);
+	return gpio_readPin(gpio_bcm_tdo);
 }

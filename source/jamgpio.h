@@ -12,8 +12,9 @@
 
 /**
  * gpio_init() - Open a connection to the GPIO memory mapped I/O
+ * @param io_def	Optional string with io definition or NULL
  */
-void gpio_init();
+void gpio_init(char *io_def);
 
 /**
  * gpio_exit() - Close the connection to the memory mapped I/O
